@@ -1,0 +1,275 @@
+const socket = io();
+
+const joinScreen = document.getElementById("joinScreen");
+const gameWrap = document.getElementById("gameWrap");
+const joinForm = document.getElementById("joinForm");
+const nameInput = document.getElementById("nameInput");
+const answerForm = document.getElementById("answerForm");
+const answerInput = document.getElementById("answerInput");
+const feedbackBox = document.getElementById("feedback");
+const mathQuestion = document.getElementById("mathQuestion");
+const mathProgress = document.getElementById("mathProgress");
+const roundValue = document.getElementById("roundValue");
+const timerValue = document.getElementById("timerValue");
+const levelValue = document.getElementById("levelValue");
+const rankValue = document.getElementById("rankValue");
+const leaderboardList = document.getElementById("leaderboardList");
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+const gameState = {
+  players: {},
+  bullets: [],
+  leaderboard: [],
+  round: 0,
+  timer: 0,
+  myPlayerId: null,
+  playerInfo: null,
+  cameraX: 0,
+  cameraY: 0,
+  started: false
+};
+
+const keys = { w: false, a: false, s: false, d: false };
+let pointer = { x: canvas.width / 2, y: canvas.height / 2 };
+let mouseDown = false;
+
+function updateHud() {
+  const info = gameState.playerInfo || {};
+  const progressText = `${info.answeredCount || 0} / 3 solved`;
+  mathProgress.textContent = progressText;
+
+  if (info.currentQuestion && info.currentQuestion.text) {
+    mathQuestion.textContent = info.currentQuestion.text;
+  } else {
+    mathQuestion.textContent = "Waiting for the next math challenge...";
+  }
+
+  roundValue.textContent = String(gameState.round || 1);
+  timerValue.textContent = String(Math.max(0, Math.ceil(gameState.timer || 0)));
+  levelValue.textContent = String(info.level || 1);
+  rankValue.textContent = info.rank || "Rookie";
+
+  leaderboardList.innerHTML = "";
+  gameState.leaderboard.forEach((entry, index) => {
+    const item = document.createElement("li");
+    item.innerHTML = `<span>#${index + 1} ${entry.name}</span><strong>${entry.score}</strong>`;
+    leaderboardList.appendChild(item);
+  });
+}
+
+function setFeedback(message, isCorrect) {
+  feedbackBox.textContent = message;
+  feedbackBox.style.color = isCorrect ? "#8dffbb" : "#ffb4b4";
+}
+
+function joinGame(event) {
+  event.preventDefault();
+  const playerName = nameInput.value.trim() || "Player";
+  socket.emit("joinGame", { name: playerName });
+  joinScreen.hidden = true;
+  gameWrap.hidden = false;
+}
+
+function handlePointerMove(event) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  pointer.x = (event.clientX - rect.left) * scaleX + gameState.cameraX;
+  pointer.y = (event.clientY - rect.top) * scaleY + gameState.cameraY;
+}
+
+canvas.addEventListener("mousemove", handlePointerMove);
+canvas.addEventListener("mousedown", () => {
+  mouseDown = true;
+});
+window.addEventListener("mouseup", () => {
+  mouseDown = false;
+});
+
+joinForm.addEventListener("submit", joinGame);
+
+answerForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const value = answerInput.value.trim();
+  if (value === "") return;
+  socket.emit("submitAnswer", { answer: value });
+  answerInput.value = "";
+});
+
+document.querySelectorAll(".weaponButton").forEach((button) => {
+  button.addEventListener("click", () => {
+    socket.emit("switchWeapon", button.dataset.weapon);
+  });
+});
+
+window.addEventListener("keydown", (event) => {
+  const key = event.key.toLowerCase();
+  if (key === "w") keys.w = true;
+  if (key === "a") keys.a = true;
+  if (key === "s") keys.s = true;
+  if (key === "d") keys.d = true;
+
+  if (key === "1") socket.emit("switchWeapon", "pistol");
+  if (key === "2") socket.emit("switchWeapon", "smg");
+  if (key === "3") socket.emit("switchWeapon", "rifle");
+  if (key === "4") socket.emit("switchWeapon", "shotgun");
+  if (key === "5") socket.emit("switchWeapon", "blaster");
+});
+
+window.addEventListener("keyup", (event) => {
+  const key = event.key.toLowerCase();
+  if (key === "w") keys.w = false;
+  if (key === "a") keys.a = false;
+  if (key === "s") keys.s = false;
+  if (key === "d") keys.d = false;
+});
+
+socket.on("gameState", (state) => {
+  gameState.players = state.players || {};
+  gameState.bullets = state.bullets || [];
+  gameState.leaderboard = state.leaderboard || [];
+  gameState.round = state.round || 0;
+  gameState.timer = state.timer || 0;
+  gameState.started = state.started;
+
+  const myPlayer = gameState.players[gameState.myPlayerId];
+  if (myPlayer) {
+    gameState.cameraX = myPlayer.x - canvas.width / 2;
+    gameState.cameraY = myPlayer.y - canvas.height / 2;
+  }
+
+  updateHud();
+});
+
+socket.on("playerState", (playerInfo) => {
+  gameState.playerInfo = playerInfo;
+  const myPlayer = gameState.players[gameState.myPlayerId];
+  if (myPlayer) {
+    gameState.cameraX = myPlayer.x - canvas.width / 2;
+    gameState.cameraY = myPlayer.y - canvas.height / 2;
+  }
+  updateHud();
+});
+
+socket.on("answerFeedback", ({ correct, message }) => {
+  setFeedback(message, correct);
+});
+
+socket.on("connect", () => {
+  gameState.myPlayerId = socket.id;
+});
+
+setInterval(() => {
+  if (gameState.myPlayerId) {
+    const myPlayer = gameState.players[gameState.myPlayerId];
+    if (myPlayer) {
+      const worldX = pointer.x;
+      const worldY = pointer.y;
+      const angle = Math.atan2(worldY - myPlayer.y, worldX - myPlayer.x);
+      socket.emit("aim", { angle });
+    }
+
+    socket.emit("input", {
+      up: keys.w,
+      down: keys.s,
+      left: keys.a,
+      right: keys.d
+    });
+
+    if (mouseDown) {
+      socket.emit("shoot");
+    }
+  }
+}, 1000 / 60);
+
+function drawBackground() {
+  ctx.fillStyle = "#09141f";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.strokeStyle = "rgba(108, 190, 255, 0.15)";
+  ctx.lineWidth = 1;
+
+  for (let x = 0; x < canvas.width; x += 40) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, canvas.height);
+    ctx.stroke();
+  }
+
+  for (let y = 0; y < canvas.height; y += 40) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(canvas.width, y);
+    ctx.stroke();
+  }
+}
+
+function drawPlayer(player) {
+  if (!player) return;
+
+  const drawX = player.x - gameState.cameraX;
+  const drawY = player.y - gameState.cameraY;
+
+  ctx.save();
+  ctx.translate(drawX, drawY);
+  ctx.rotate(player.angle);
+
+  ctx.fillStyle = player.id === gameState.myPlayerId ? "#7ef0ff" : "#f6d365";
+  ctx.beginPath();
+  ctx.arc(0, 0, 18, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#0d1b2a";
+  ctx.fillRect(-18, -28, 36, 8);
+  ctx.fillStyle = "#40e39a";
+  ctx.fillRect(-18, -28, 36 * (player.health / 100), 8);
+
+  ctx.fillStyle = "#121826";
+  ctx.fillRect(8, -4, 18, 6);
+  ctx.restore();
+
+  ctx.fillStyle = "#dff9ff";
+  ctx.font = "bold 12px Arial";
+  ctx.textAlign = "center";
+  ctx.fillText(player.name, drawX, drawY - 36);
+
+  ctx.fillStyle = "#9ad7ff";
+  ctx.fillText(`${player.rank} Lv.${player.level}`, drawX, drawY - 22);
+}
+
+function drawBullet(bullet) {
+  const drawX = bullet.x - gameState.cameraX;
+  const drawY = bullet.y - gameState.cameraY;
+
+  ctx.fillStyle = bullet.color || "#ffffff";
+  ctx.beginPath();
+  ctx.arc(drawX, drawY, bullet.radius || 5, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawCrosshair() {
+  const cx = pointer.x - gameState.cameraX;
+  const cy = pointer.y - gameState.cameraY;
+
+  ctx.strokeStyle = "rgba(255,255,255,0.8)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(cx - 8, cy);
+  ctx.lineTo(cx + 8, cy);
+  ctx.moveTo(cx, cy - 8);
+  ctx.lineTo(cx, cy + 8);
+  ctx.stroke();
+}
+
+function draw() {
+  drawBackground();
+
+  Object.values(gameState.players).forEach(drawPlayer);
+  gameState.bullets.forEach(drawBullet);
+  drawCrosshair();
+
+  requestAnimationFrame(draw);
+}
+
+requestAnimationFrame(draw);

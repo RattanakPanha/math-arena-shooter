@@ -1,0 +1,13 @@
+{
+  "name": "math-arena-shooter",
+  "version": "1.0.0",
+  "description": "Online multiplayer browser shooter with rank, level, weapon switching, and randomized Grade 11 math rounds.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  }
+}
